@@ -86,4 +86,4 @@ marginally from official records. Encyclopedia content from Wikipedia.
 ---
 
 Built by **Akash Modili** — [GitHub](https://github.com/modiliakash-29) ·
-[LinkedIn](https://www.linkedin.com/in/YOUR-PROFILE)
+[LinkedIn]([(https://www.linkedin.com/in/akash-modili/)
