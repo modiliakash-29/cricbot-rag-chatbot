@@ -4,8 +4,7 @@ A retrieval-augmented generation (RAG) chatbot that answers cricket questions
 grounded in real data — Wikipedia articles plus ball-by-ball records of
 **1,200+ IPL matches** — instead of LLM guesswork.
 
-**🔗 Live demo:** https://YOUR-APP-URL.streamlit.app
-
+**🔗 Live demo:** https://cricbot-akash.streamlit.app/
 ## What it can do
 
 - Answer rules, history, and player questions from Wikipedia knowledge
