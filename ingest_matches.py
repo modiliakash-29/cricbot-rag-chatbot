@@ -125,12 +125,77 @@ def summarize_match(match: dict) -> str | None:
     pom = info.get("player_of_match", [])
     pom_text = f" Player of the match: {pom[0]}." if pom else ""
 
+    # If this match is a final, say explicitly who won the tournament.
+    # Users ask "who won the IPL in X?" — the documents must contain
+    # that vocabulary for embedding search to connect question to answer.
+    champion_text = ""
+    if stage and "final" in str(stage).lower() and "winner" in outcome:
+        champion_text = (f" By winning the final, {outcome['winner']} became "
+                         f"the IPL {season} champions, winning the IPL title "
+                         f"for the {season} season.")
+
     where = f"{venue}, {city}" if city and city not in venue else venue
     header = (f"IPL {season}{', ' + stage if stage else ''}: "
               f"{teams[0]} vs {teams[1]} at {where} on {date}.")
 
     return (f"{header}{toss_text} {result[0].upper() + result[1:]}. "
-            + " ".join(innings_lines) + pom_text)
+            + " ".join(innings_lines) + pom_text + champion_text)
+
+
+def build_season_summaries(matches: dict[str, dict]) -> list[tuple[str, str, dict]]:
+    """
+    Aggregate ball-by-ball data into one summary document per season:
+    champion, leading run-scorer (Orange Cap), leading wicket-taker
+    (Purple Cap). No single match contains these facts — they only
+    exist when computed across a whole season.
+    Returns a list of (id, document, metadata) tuples.
+    """
+    seasons: dict[str, dict] = defaultdict(
+        lambda: {"runs": defaultdict(int), "wkts": defaultdict(int),
+                 "champion": None, "matches": 0}
+    )
+
+    for match in matches.values():
+        info = match.get("info", {})
+        season = str(info.get("season", "?"))
+        s = seasons[season]
+        s["matches"] += 1
+
+        for inn in match.get("innings", []):
+            for over in inn.get("overs", []):
+                for d in over.get("deliveries", []):
+                    s["runs"][d.get("batter", "?")] += (
+                        d.get("runs", {}).get("batter", 0))
+                    for w in d.get("wickets", []):
+                        if w.get("kind") not in ("run out", "retired hurt",
+                                                 "retired out",
+                                                 "obstructing the field"):
+                            s["wkts"][d.get("bowler", "?")] += 1
+
+        stage = info.get("event", {}).get("stage") or ""
+        if "final" in str(stage).lower() and "winner" in info.get("outcome", {}):
+            s["champion"] = info["outcome"]["winner"]
+
+    docs = []
+    for season, s in sorted(seasons.items()):
+        text = (f"IPL {season} season summary "
+                f"({s['matches']} matches played).")
+        if s["champion"]:
+            text += (f" {s['champion']} won the IPL {season} title, "
+                     f"becoming the champions of the season.")
+        if s["runs"]:
+            name, runs = max(s["runs"].items(), key=lambda x: x[1])
+            text += (f" The leading run-scorer of IPL {season} was {name} "
+                     f"with {runs} runs, winning the Orange Cap for "
+                     f"scoring the most runs in the season.")
+        if s["wkts"]:
+            name, wkts = max(s["wkts"].items(), key=lambda x: x[1])
+            text += (f" The leading wicket-taker of IPL {season} was {name} "
+                     f"with {wkts} wickets, winning the Purple Cap for "
+                     f"taking the most wickets in the season.")
+        docs.append((f"season-{season}", text,
+                     {"source": f"IPL {season} season summary"}))
+    return docs
 
 
 def main():
@@ -155,12 +220,23 @@ def main():
         metas.append({"source": f"IPL {season}: {teams[0]} vs {teams[1]}"})
 
     print(f"Built {len(docs)} match summaries ({skipped} skipped).")
+
+    # Season-level aggregates (Orange Cap, Purple Cap, champions)
+    for sid, text, meta in build_season_summaries(matches):
+        docs.append(text)
+        ids.append(sid)
+        metas.append(meta)
+    print(f"Added {len([i for i in ids if i.startswith('season-')])} "
+          f"season summaries.")
+
     print("Embedding and storing (this takes a few minutes)...")
 
     # Add in batches — large single adds can hit limits
     BATCH = 200
     for i in range(0, len(docs), BATCH):
-        collection.add(
+        # upsert = insert or overwrite. Re-running this script updates
+        # existing match entries instead of crashing on duplicate ids.
+        collection.upsert(
             documents=docs[i:i + BATCH],
             ids=ids[i:i + BATCH],
             metadatas=metas[i:i + BATCH],
