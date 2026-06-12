@@ -1,65 +1,90 @@
-# CricBot — Cricket RAG Chatbot (Phase 1)
+# 🏏 CricBot — Cricket RAG Chatbot
 
 A retrieval-augmented generation (RAG) chatbot that answers cricket questions
-grounded in real Wikipedia content instead of LLM guesswork.
+grounded in real data — Wikipedia articles plus ball-by-ball records of
+**1,200+ IPL matches** — instead of LLM guesswork.
 
-## How it works
+**🔗 Live demo:** https://YOUR-APP-URL.streamlit.app
 
-**Indexing (offline):** `ingest.py` downloads ~20 cricket articles from
-Wikipedia, splits them into overlapping ~900-character chunks, embeds each
-chunk with a sentence-transformer model, and stores everything in a local
-ChromaDB vector database (`./cricbot_db`).
+## What it can do
 
-**Query (runtime):** `chat.py` embeds your question, finds the 5 most
-semantically similar chunks, and sends them with your question to Claude,
-which answers using only that context and cites its sources.
+- Answer rules, history, and player questions from Wikipedia knowledge
+- Answer match questions ("Who won the 2019 IPL final? Where was it played?")
+  from Cricsheet ball-by-ball data
+- Answer season aggregates computed from raw deliveries — Orange Cap,
+  Purple Cap, champions by year
+- Hold a conversation: follow-ups like "and who was player of the match?"
+  resolve against chat history
+- Refuse to guess: if the knowledge base lacks the answer, it says so,
+  and every answer cites its sources
 
-## Setup (step by step)
+## Architecture
 
-1. Make sure you have Python 3.10+ installed: `python --version`
+```
+INDEXING (offline)
+Wikipedia articles ──┐
+                     ├─► chunk ─► embed (all-MiniLM-L6-v2) ─► ChromaDB
+Cricsheet JSON ──────┤
+(1,243 matches)      └─► transform to natural-language match
+                         summaries + computed season aggregates
 
-2. Create and activate a virtual environment:
-   ```
-   python -m venv venv
-   venv\Scripts\activate        (Windows)
-   source venv/bin/activate     (Mac/Linux)
-   ```
+QUERY (runtime)
+question ─► context-aware retrieval (top-5 chunks) ─► Gemini 2.5 Flash
+            (recent questions included)               (grounded prompt)
+                                                   └─► cited answer
+```
 
-3. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+Key engineering decisions:
 
-4. Get an Anthropic API key at https://console.anthropic.com and set it:
-   ```
-   set ANTHROPIC_API_KEY=sk-ant-...      (Windows cmd)
-   $env:ANTHROPIC_API_KEY="sk-ant-..."   (Windows PowerShell)
-   export ANTHROPIC_API_KEY="sk-ant-..." (Mac/Linux)
-   ```
+- **Structured → narrative transformation.** Ball-by-ball JSON doesn't embed
+  meaningfully, so each match is converted to a natural-language summary,
+  and per-season stats (most runs/wickets, champions) are computed and
+  written as their own documents — data shaped at every level users ask at.
+- **Retrieval vocabulary engineering.** Documents deliberately include the
+  phrasings users search with ("won the IPL title", "Orange Cap",
+  "leading run-scorer") so embedding search connects question to answer.
+- **Context-aware retrieval.** Follow-up questions carry no searchable
+  topic words, so retrieval queries include the previous two questions.
+- **Graceful degradation.** API rate limits and outages produce friendly
+  messages, not crashes (caught a real 503 in testing).
 
-5. Build the knowledge base (takes a few minutes the first time while the
-   embedding model downloads):
-   ```
-   python ingest.py
-   ```
+## Stack
 
-6. Chat:
-   ```
-   python chat.py
-   ```
+Python · ChromaDB (vector store) · sentence-transformers embeddings ·
+Google Gemini API · Streamlit · Cricsheet.org open data · Wikipedia API
 
-## Try asking
+## Run it locally
 
-- What is the DLS method and when is it used?
-- Explain the LBW rule in simple terms.
-- Who won the 2023 Cricket World Cup?
-- What is the difference between Test cricket and T20?
+```bash
+git clone https://github.com/modiliakash-29/cricbot-rag-chatbot.git
+cd cricbot-rag-chatbot
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 
-## What's next (Phases 2–4)
+export GEMINI_API_KEY="your-key"   # free at aistudio.google.com
 
-- **Phase 2:** Ingest ball-by-ball match data from Cricsheet.org by converting
-  match JSON into natural-language summaries before embedding.
-- **Phase 3:** Better citations, "I don't know" handling, hybrid
-  keyword + semantic search.
-- **Phase 4:** Streamlit chat UI and free deployment (Streamlit Cloud or
-  Hugging Face Spaces).
+python ingest.py           # build Wikipedia knowledge base
+python ingest_matches.py   # add IPL match data + season aggregates
+python chat.py             # terminal chat, or:
+python -m streamlit run app.py   # web UI
+```
+
+## Project structure
+
+| File | Purpose |
+|---|---|
+| `ingest.py` | Fetch + chunk + embed Wikipedia cricket articles |
+| `ingest_matches.py` | Download Cricsheet data, transform JSON → summaries, compute season aggregates |
+| `chat.py` | Terminal RAG chat with memory and error handling |
+| `app.py` | Streamlit web UI (deployed version) |
+
+## Data
+
+Match data from [Cricsheet](https://cricsheet.org) (open, CC-licensed
+ball-by-ball records). Stats are computed from this data and may differ
+marginally from official records. Encyclopedia content from Wikipedia.
+
+---
+
+Built by **Akash Modili** — [GitHub](https://github.com/modiliakash-29) ·
+[LinkedIn](https://www.linkedin.com/in/YOUR-PROFILE)
