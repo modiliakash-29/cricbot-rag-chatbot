@@ -2,7 +2,6 @@
 venv/
 
 # The vector database — rebuildable anytime with `python ingest.py`
-cricbot_db/
 
 # Python cache files
 __pycache__/
