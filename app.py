@@ -49,6 +49,13 @@ st.set_page_config(page_title="CricBot", page_icon="🏏", layout="wide")
 # ---------------------------------------------------------------
 st.markdown("""
 <style>
+/* Hide Streamlit's default chrome (toolbar, main menu, footer, header) */
+[data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
+[data-testid="stDecoration"] {display: none;}
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
 .cric-header {
     background: linear-gradient(90deg, #14331f 0%, #1d4a2c 55%, #b8860b 130%);
     padding: 1.4rem 1.8rem;
