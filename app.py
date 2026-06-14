@@ -1,10 +1,14 @@
 """
-app.py — Phase 4 of CricBot
-A web chat interface for CricBot, built with Streamlit.
-Same RAG pipeline as chat.py — retrieval from ChromaDB, generation with
-Gemini, conversation memory — wrapped in a browser chat UI.
+app.py — CricBot 2.0
+Upgrades over v1:
+  • Tiered answering: verified knowledge base first; clearly-labeled
+    general cricket knowledge as fallback (no more flat refusals)
+  • Optional live web search (Gemini Google Search grounding) for
+    recent matches and news
+  • New interface: dark cricket theme, sidebar with sample questions,
+    clear-chat, message avatars, and a "retrieved sources" expander
 
-Run:  streamlit run app.py
+Run:  python -m streamlit run app.py
 """
 
 import os
@@ -17,25 +21,61 @@ from google.genai import types, errors
 TOP_K = 5
 MODEL = "gemini-2.5-flash"
 
-SYSTEM_PROMPT = """You are CricBot, a helpful cricket expert assistant.
+SYSTEM_PROMPT = """You are CricBot, an expert cricket assistant.
 
-Answer the user's question using ONLY the provided context passages.
+You answer using TWO tiers of knowledge:
+
+TIER 1 — VERIFIED: the context passages provided with each question
+(from a curated database of Wikipedia articles and 1,200+ IPL matches).
+Prefer this. When your answer comes from the passages, end with:
+Sources: [source name], [source name]
+
+TIER 2 — GENERAL KNOWLEDGE: if the passages do not contain the answer
+but you reliably know it from general cricket knowledge, answer anyway,
+and you MUST end with this exact label instead of sources:
+⚠️ From general knowledge — not verified against my database.
+
 Rules:
-- If the context does not contain the answer, say "I don't have enough
-  information in my knowledge base to answer that" — never make facts up.
-- Cite which source(s) you used at the end of your answer, like:
-  Sources: [Indian Premier League], [Cricket World Cup]
+- Never mix the two labels in one answer.
+- If you are not confident even from general knowledge, say you are
+  not sure rather than guessing. Never invent statistics.
+- Only answer cricket-related questions; politely decline others.
 - Keep answers concise and conversational."""
 
-# ---------------------------------------------------------------
-# Page setup
-# ---------------------------------------------------------------
-st.set_page_config(page_title="CricBot", page_icon="🏏")
-st.title("🏏 CricBot")
-st.caption("A RAG chatbot grounded in Wikipedia cricket articles and "
-           "1,200+ IPL matches from Cricsheet. Built by Akash Modili.")
+st.set_page_config(page_title="CricBot", page_icon="🏏", layout="wide")
 
-# Allow the API key to come from Streamlit secrets (used when deployed)
+# ---------------------------------------------------------------
+# Custom styling on top of the theme
+# ---------------------------------------------------------------
+st.markdown("""
+<style>
+.cric-header {
+    background: linear-gradient(90deg, #14331f 0%, #1d4a2c 55%, #b8860b 130%);
+    padding: 1.4rem 1.8rem;
+    border-radius: 14px;
+    margin-bottom: 1rem;
+    border: 1px solid #2e5c3c;
+}
+.cric-header h1 {
+    color: #f5b942;
+    margin: 0;
+    font-size: 2.1rem;
+}
+.cric-header p {
+    color: #cfe3d4;
+    margin: 0.35rem 0 0 0;
+    font-size: 0.95rem;
+}
+div[data-testid="stChatMessage"] {
+    border-radius: 12px;
+    margin-bottom: 0.4rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------
+# Secrets / API key
+# ---------------------------------------------------------------
 if not os.environ.get("GEMINI_API_KEY"):
     try:
         os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
@@ -44,12 +84,12 @@ if not os.environ.get("GEMINI_API_KEY"):
 
 if not os.environ.get("GEMINI_API_KEY"):
     st.error("GEMINI_API_KEY is not set. Export it in your terminal "
-             "before running, or add it to Streamlit secrets.")
+             "or add it to Streamlit secrets.")
     st.stop()
 
 
 # ---------------------------------------------------------------
-# Cached resources — loaded once, reused across reruns
+# Cached resources
 # ---------------------------------------------------------------
 @st.cache_resource
 def load_collection():
@@ -73,10 +113,10 @@ llm = load_llm()
 
 
 # ---------------------------------------------------------------
-# RAG helpers (same logic as chat.py)
+# RAG helpers
 # ---------------------------------------------------------------
-def retrieve(question: str) -> list[dict]:
-    results = collection.query(query_texts=[question], n_results=TOP_K)
+def retrieve(query: str) -> list[dict]:
+    results = collection.query(query_texts=[query], n_results=TOP_K)
     return [{"text": doc, "source": meta["source"]}
             for doc, meta in zip(results["documents"][0],
                                  results["metadatas"][0])]
@@ -90,32 +130,129 @@ def build_user_message(question: str, chunks: list[dict]) -> str:
     return f"Context passages:\n\n{context}\n\nQuestion: {question}"
 
 
+def rewrite_query(question: str, history_msgs: list[dict]) -> str:
+    """
+    Turn a follow-up ("what about his international career?") into a
+    standalone search query ("Suresh Raina international cricket career")
+    using recent conversation. This fixes topic drift: without it,
+    retrieval can latch onto whoever the embedding model finds most
+    salient rather than who the conversation is actually about.
+    Falls back to the raw question if anything goes wrong.
+    """
+    if not history_msgs:
+        return question
+    convo = "\n".join(f"{m['role']}: {m['content']}" for m in history_msgs[-4:])
+    prompt = (
+        "Given the conversation, rewrite the user's latest question as a "
+        "standalone search query that includes the specific player, team, "
+        "season, or topic being discussed. Output ONLY the query, nothing "
+        f"else.\n\nConversation:\n{convo}\n\nLatest question: {question}\n\n"
+        "Standalone search query:"
+    )
+    try:
+        resp = llm.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=60,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        rewritten = (resp.text or "").strip()
+        return rewritten if rewritten else question
+    except Exception:
+        return question
+
+
 # ---------------------------------------------------------------
-# Chat state — survives reruns via session_state
+# Sidebar
+# ---------------------------------------------------------------
+SAMPLES = [
+    "Who won the IPL in 2020?",
+    "Who won the Orange Cap in 2016?",
+    "Explain the LBW rule in simple terms",
+    "What is the DLS method?",
+    "Who has won the most IPL titles?",
+]
+
+with st.sidebar:
+    st.markdown("## 🏏 CricBot")
+    st.caption("RAG chatbot over Wikipedia cricket articles + ball-by-ball "
+               "data for 1,200+ IPL matches. Built by **Akash Modili**.")
+
+    st.divider()
+    st.markdown("**Try asking:**")
+    for q in SAMPLES:
+        if st.button(q, use_container_width=True):
+            st.session_state.pending = q
+            st.rerun()
+
+    st.divider()
+    use_web = st.toggle(
+        "🌐 Live web search",
+        value=False,
+        help="Lets CricBot search the web for recent matches and news "
+             "(uses Gemini's Google Search grounding).",
+    )
+
+    if st.button("🧹 Clear chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+    st.divider()
+    st.caption(f"Knowledge base: {collection.count():,} documents")
+    st.caption("[Source code](https://github.com/modiliakash-29/"
+               "cricbot-rag-chatbot)")
+
+# ---------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------
+st.markdown("""
+<div class="cric-header">
+  <h1>🏏 CricBot</h1>
+  <p>Ask me anything about cricket — rules, history, IPL matches, stats.
+  Database-verified answers are cited; everything else is clearly labeled.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------
+# Chat state + replay
 # ---------------------------------------------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # [{"role": "user"/"assistant", "content": str}]
+    st.session_state.messages = []
 
-# Replay the conversation so far
+AVATARS = {"user": "🧑", "assistant": "🏏"}
+
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
+    with st.chat_message(msg["role"], avatar=AVATARS[msg["role"]]):
         st.markdown(msg["content"])
+        if msg.get("chunks"):
+            with st.expander("🔎 Retrieved passages"):
+                for c in msg["chunks"]:
+                    st.markdown(f"**{c['source']}** — {c['text'][:300]}…")
 
 # ---------------------------------------------------------------
-# Handle a new question
+# Input: chat box or a clicked sample question
 # ---------------------------------------------------------------
-if question := st.chat_input("Ask me anything about cricket..."):
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
+question = st.chat_input("Ask me anything about cricket...")
+if st.session_state.get("pending"):
+    question = st.session_state.pop("pending")
+
+if question:
+    st.session_state.messages.append(
+        {"role": "user", "content": question})
+    with st.chat_message("user", avatar=AVATARS["user"]):
         st.markdown(question)
 
-    # Context-aware retrieval: include the previous two user questions
-    past_questions = [m["content"] for m in st.session_state.messages
-                      if m["role"] == "user"][:-1]
-    retrieval_query = " ".join(past_questions[-2:] + [question])
-    chunks = retrieve(retrieval_query)
+    # Resolve follow-ups into a standalone query before retrieval.
+    # "what about his international career?" → "Suresh Raina international
+    # career" — so the search finds the right person, not whoever the
+    # embedding model finds most salient.
+    prior = st.session_state.messages[:-1]
+    search_query = rewrite_query(question, prior)
+    chunks = retrieve(search_query)
 
-    # Build Gemini-format history from prior turns (capped at 12 messages)
+    # Conversation history for the model (capped)
     history = [
         types.Content(
             role="user" if m["role"] == "user" else "model",
@@ -124,8 +261,17 @@ if question := st.chat_input("Ask me anything about cricket..."):
         for m in st.session_state.messages[:-1][-12:]
     ]
 
-    with st.chat_message("assistant"):
-        with st.spinner("Searching the knowledge base..."):
+    config_kwargs = dict(
+        system_instruction=SYSTEM_PROMPT,
+        max_output_tokens=1024,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
+    # Optional web grounding for recent info
+    if use_web:
+        config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+
+    with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+        with st.spinner("Checking the knowledge base..."):
             try:
                 response = llm.models.generate_content(
                     model=MODEL,
@@ -134,11 +280,7 @@ if question := st.chat_input("Ask me anything about cricket..."):
                         parts=[types.Part(
                             text=build_user_message(question, chunks))],
                     )],
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        max_output_tokens=1024,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    ),
+                    config=types.GenerateContentConfig(**config_kwargs),
                 )
                 answer = response.text or ("The model returned an empty "
                                            "response — try rephrasing.")
@@ -147,11 +289,16 @@ if question := st.chat_input("Ask me anything about cricket..."):
                     answer = ("Rate limit reached (free tier). "
                               "Wait about a minute and try again.")
                 else:
-                    answer = f"API error {e.code}: {e.message}. Try again shortly."
+                    answer = (f"API error {e.code}: {e.message}. "
+                              "Try again shortly.")
             except Exception as e:
                 answer = (f"Something went wrong ({type(e).__name__}). "
                           "Check the connection and try again.")
 
         st.markdown(answer)
+        with st.expander("🔎 Retrieved passages"):
+            for c in chunks:
+                st.markdown(f"**{c['source']}** — {c['text'][:300]}…")
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer, "chunks": chunks})
