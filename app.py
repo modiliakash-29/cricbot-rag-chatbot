@@ -79,6 +79,38 @@ div[data-testid="stChatMessage"] {
     border-radius: 12px;
     margin-bottom: 0.4rem;
 }
+/* Landing state */
+.cric-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.9rem;
+    margin: 0.5rem 0 1.4rem 0;
+}
+.cric-card {
+    background: #16271c;
+    border: 1px solid #2e5c3c;
+    border-radius: 12px;
+    padding: 1.1rem 1.2rem;
+}
+.cric-card .ico { font-size: 1.5rem; }
+.cric-card h4 {
+    color: #f5b942;
+    margin: 0.4rem 0 0.25rem 0;
+    font-size: 1.02rem;
+}
+.cric-card p {
+    color: #b9cebf;
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.35;
+}
+.cric-welcome {
+    color: #e8efe9;
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0.4rem 0 0.2rem 0;
+}
+.cric-sub { color: #93a89a; font-size: 0.9rem; margin-bottom: 1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -292,6 +324,33 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 AVATARS = {"user": "🧑", "assistant": "🏏"}
+
+# Landing state — shown only before the first message. Fills the empty
+# space with what CricBot can do and one-tap starter questions.
+if not st.session_state.messages:
+    st.markdown(
+        '<div class="cric-welcome">Welcome 👋 What would you like to know?</div>'
+        '<div class="cric-sub">CricBot answers from a verified database of '
+        f'{collection.count():,} documents — Wikipedia cricket knowledge plus '
+        'ball-by-ball records of 1,200+ IPL matches.</div>'
+        '<div class="cric-cards">'
+        '<div class="cric-card"><div class="ico">📜</div><h4>Rules &amp; History</h4>'
+        '<p>LBW, DLS, formats, the origins of the game.</p></div>'
+        '<div class="cric-card"><div class="ico">🏆</div><h4>IPL Results</h4>'
+        '<p>Winners, finals, and season summaries by year.</p></div>'
+        '<div class="cric-card"><div class="ico">📊</div><h4>Stats &amp; Records</h4>'
+        '<p>Orange Cap, Purple Cap, player and match numbers.</p></div>'
+        '<div class="cric-card"><div class="ico">🧠</div><h4>Follow-ups</h4>'
+        '<p>Ask naturally — it remembers the conversation.</p></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("**Start with one of these:**")
+    cols = st.columns(2)
+    for i, q in enumerate(SAMPLES):
+        if cols[i % 2].button(q, use_container_width=True, key=f"land_{i}"):
+            st.session_state.pending = q
+            st.rerun()
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=AVATARS[msg["role"]]):
