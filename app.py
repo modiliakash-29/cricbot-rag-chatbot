@@ -52,6 +52,21 @@ st.set_page_config(page_title="CricBot", page_icon="🏏", layout="wide",
 # ---------------------------------------------------------------
 st.markdown("""
 <style>
+/* Faded cricket-stadium backdrop (free Unsplash image), darkened so
+   the dark theme and text stay readable. Fixed so it doesn't scroll. */
+[data-testid="stAppViewContainer"] {
+    background:
+        linear-gradient(rgba(8,16,11,0.86), rgba(8,16,11,0.94)),
+        url("https://images.unsplash.com/photo-1531415074968-036ba1b575da?auto=format&fit=crop&w=1600&q=70");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}
+[data-testid="stHeader"] { background: transparent; }
+section[data-testid="stSidebar"] {
+    background: rgba(10,20,13,0.92);
+    backdrop-filter: blur(2px);
+}
 /* Hide Streamlit's default chrome (toolbar, main menu, footer, header) */
 [data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
 [data-testid="stDecoration"] {display: none;}
@@ -317,8 +332,7 @@ with st.sidebar:
 st.markdown("""
 <div class="cric-header">
   <h1>🏏 CricBot</h1>
-  <p>Ask me anything about cricket — rules, history, IPL matches, stats.
-  Database-verified answers are cited; everything else is clearly labeled.</p>
+  <p>Your cricket brain, grounded in real data.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -370,7 +384,7 @@ for msg in st.session_state.messages:
 # ---------------------------------------------------------------
 # Input: chat box or a clicked sample question
 # ---------------------------------------------------------------
-question = st.chat_input("Ask me anything about cricket...")
+question = st.chat_input("What do you want to know about cricket?")
 if st.session_state.get("pending"):
     question = st.session_state.pop("pending")
 
