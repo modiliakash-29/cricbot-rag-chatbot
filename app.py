@@ -44,7 +44,8 @@ Rules:
 - Only answer cricket-related questions; politely decline others.
 - Keep answers concise and conversational."""
 
-st.set_page_config(page_title="CricBot", page_icon="🏏", layout="wide")
+st.set_page_config(page_title="CricBot", page_icon="🏏", layout="wide",
+                   initial_sidebar_state="expanded")
 
 # ---------------------------------------------------------------
 # Custom styling on top of the theme
@@ -79,7 +80,7 @@ div[data-testid="stChatMessage"] {
     border-radius: 12px;
     margin-bottom: 0.4rem;
 }
-/* Landing state */
+/* Landing state — informational cards (NOT clickable) */
 .cric-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -87,21 +88,25 @@ div[data-testid="stChatMessage"] {
     margin: 0.5rem 0 1.4rem 0;
 }
 .cric-card {
-    background: #16271c;
-    border: 1px solid #2e5c3c;
-    border-radius: 12px;
-    padding: 1.1rem 1.2rem;
+    background: transparent;
+    border: none;
+    border-left: 2px solid #3a6b48;
+    border-radius: 0;
+    padding: 0.2rem 0 0.2rem 0.9rem;
+    cursor: default;
 }
-.cric-card .ico { font-size: 1.5rem; }
+.cric-card .ico { font-size: 1.25rem; opacity: 0.9; }
 .cric-card h4 {
-    color: #f5b942;
-    margin: 0.4rem 0 0.25rem 0;
-    font-size: 1.02rem;
+    color: #cBe0d0;
+    margin: 0.3rem 0 0.2rem 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
 }
 .cric-card p {
-    color: #b9cebf;
+    color: #8ea596;
     margin: 0;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     line-height: 1.35;
 }
 .cric-welcome {
@@ -333,6 +338,8 @@ if not st.session_state.messages:
         '<div class="cric-sub">CricBot answers from a verified database of '
         f'{collection.count():,} documents — Wikipedia cricket knowledge plus '
         'ball-by-ball records of 1,200+ IPL matches.</div>'
+        '<div style="color:#7e948a;font-size:0.8rem;text-transform:uppercase;'
+        'letter-spacing:0.08em;margin-bottom:0.5rem;">What I can answer</div>'
         '<div class="cric-cards">'
         '<div class="cric-card"><div class="ico">📜</div><h4>Rules &amp; History</h4>'
         '<p>LBW, DLS, formats, the origins of the game.</p></div>'
