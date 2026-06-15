@@ -12,9 +12,11 @@ Run:  python -m streamlit run app.py
 """
 
 import os
+import re
 
 import streamlit as st
 import chromadb
+from rank_bm25 import BM25Okapi
 from google import genai
 from google.genai import types, errors
 
@@ -109,6 +111,29 @@ def load_llm():
     return genai.Client()
 
 
+def _tokenize(text: str) -> list[str]:
+    """Lowercase word tokens for BM25 keyword matching."""
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+@st.cache_resource
+def load_bm25(_collection):
+    """
+    Build a BM25 keyword index over the entire corpus, once.
+    BM25 ranks documents by exact-term overlap with the query — the
+    complement to semantic search, which can miss exact names and
+    abbreviations. Cached so it's built a single time per session.
+    The leading underscore on _collection tells Streamlit not to try
+    to hash the Chroma object (it isn't hashable).
+    """
+    data = _collection.get()  # all documents + metadata
+    docs = data["documents"]
+    metas = data["metadatas"]
+    tokenized = [_tokenize(d) for d in docs]
+    bm25 = BM25Okapi(tokenized)
+    return bm25, docs, metas
+
+
 try:
     collection = load_collection()
 except Exception:
@@ -117,16 +142,54 @@ except Exception:
     st.stop()
 
 llm = load_llm()
+bm25, bm25_docs, bm25_metas = load_bm25(collection)
 
 
 # ---------------------------------------------------------------
 # RAG helpers
 # ---------------------------------------------------------------
 def retrieve(query: str) -> list[dict]:
-    results = collection.query(query_texts=[query], n_results=TOP_K)
-    return [{"text": doc, "source": meta["source"]}
-            for doc, meta in zip(results["documents"][0],
-                                 results["metadatas"][0])]
+    """
+    Hybrid retrieval: combine semantic (vector) and keyword (BM25)
+    search, then fuse with Reciprocal Rank Fusion (RRF).
+
+    Why hybrid? Semantic search captures meaning/paraphrase but can
+    miss exact tokens (abbreviations, specific names). BM25 nails exact
+    terms but misses paraphrase. RRF rewards documents that rank well
+    in EITHER list, so we get both strengths.
+
+    RRF score for a doc = sum over each ranked list of 1/(k + rank).
+    k=60 is the standard constant; it damps the influence of any single
+    list so no one method dominates.
+    """
+    POOL = 20   # candidates to pull from each method
+    K = 60      # RRF damping constant
+
+    # --- Semantic ranking (ChromaDB) ---
+    sem = collection.query(query_texts=[query], n_results=POOL)
+    sem_docs = sem["documents"][0]
+    sem_metas = sem["metadatas"][0]
+
+    # --- Keyword ranking (BM25 over full corpus) ---
+    scores = bm25.get_scores(_tokenize(query))
+    top_idx = sorted(range(len(scores)), key=lambda i: -scores[i])[:POOL]
+
+    # --- Fuse with RRF, keyed by document text ---
+    rrf: dict[str, float] = {}
+    lookup: dict[str, dict] = {}
+
+    for rank, (doc, meta) in enumerate(zip(sem_docs, sem_metas)):
+        rrf[doc] = rrf.get(doc, 0.0) + 1.0 / (K + rank)
+        lookup[doc] = {"text": doc, "source": meta["source"]}
+
+    for rank, i in enumerate(top_idx):
+        doc = bm25_docs[i]
+        rrf[doc] = rrf.get(doc, 0.0) + 1.0 / (K + rank)
+        lookup[doc] = {"text": doc, "source": bm25_metas[i]["source"]}
+
+    # Top TOP_K after fusion
+    best = sorted(rrf.items(), key=lambda x: -x[1])[:TOP_K]
+    return [lookup[doc] for doc, _ in best]
 
 
 def build_user_message(question: str, chunks: list[dict]) -> str:
