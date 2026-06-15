@@ -56,7 +56,7 @@ st.markdown("""
    the dark theme and text stay readable. Fixed so it doesn't scroll. */
 [data-testid="stAppViewContainer"] {
     background:
-        linear-gradient(rgba(8,16,11,0.86), rgba(8,16,11,0.94)),
+        linear-gradient(rgba(6,12,8,0.93), rgba(6,12,8,0.97)),
         url("https://images.unsplash.com/photo-1531415074968-036ba1b575da?auto=format&fit=crop&w=1600&q=70");
     background-size: cover;
     background-position: center;
